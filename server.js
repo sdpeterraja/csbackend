@@ -13,7 +13,10 @@ dotenv.config();
 connectDB();
 
 const app = express();
-
+app.use((req, res, next) => {
+  console.log(req.method, req.originalUrl);
+  next();
+});
 // Middleware
 app.use(helmet()); // Security headers
 // app.use(cors({
