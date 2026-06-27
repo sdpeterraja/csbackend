@@ -32,7 +32,8 @@ const corsOptions = {
     'http://127.0.0.1:8080',
     'http://localhost:8080',
     'http://csbackend-kfav.onrender.com',
-    'https://www.catalogstack.in'
+    'https://www.catalogstack.in',
+    'https://www.catalogstack.in/canva/config'
   ],
   credentials: true,            // Allow cookies/auth headers
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
