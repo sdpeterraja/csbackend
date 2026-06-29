@@ -51,6 +51,16 @@ async function getValidAccessToken(userId) {
       await config.save();
     } catch (error) {
       console.error('Failed to refresh Canva token:', error);
+      
+      // If token is revoked or invalid, disconnect the integration
+      if (error.message.includes('revoked') || error.message.includes('invalid_grant') || error.message.includes('expired')) {
+        config.accessToken = '';
+        config.refreshToken = '';
+        config.isConnected = false;
+        await config.save();
+        throw new Error('Canva connection lost or revoked. Please reconnect your account.');
+      }
+      
       throw new Error(`Canva authentication expired: ${error.message}`);
     }
   }
@@ -466,8 +476,9 @@ exports.autofillAndExport = async (req, res) => {
 // 10. List User's Personal Designs
 exports.listDesigns = async (req, res) => {
   try {
+    const ownership = req.query.ownership || 'any';
     const token = await getValidAccessToken(req.user.userId);
-    const response = await fetch('https://api.canva.com/rest/v1/designs', {
+    const response = await fetch(`https://api.canva.com/rest/v1/designs?ownership=${ownership}`, {
       headers: {
         'Authorization': `Bearer ${token}`
       }
