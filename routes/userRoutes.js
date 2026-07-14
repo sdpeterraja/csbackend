@@ -40,6 +40,12 @@ router.delete('/api-keys/:keyId', userController.revokeApiKey);
 router.post('/delete-account', userController.requestAccountDeletion);
 router.post('/confirm-deletion', userController.confirmAccountDeletion);
 
+// Organization and Users
+router.get('/organization/users', userController.getOrganizationUsers);
+router.post('/organization/users/invite', userController.inviteOrganizationUser);
+router.delete('/organization/users/:id', userController.revokeOrganizationUser);
+router.put('/organization/logo', userController.updateOrganizationLogo);
+
 // Activity log
 router.get('/activity', userController.getActivityLog);
 

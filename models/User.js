@@ -18,13 +18,17 @@ const userSchema = new mongoose.Schema({
     trim: true,
     default: 'My Organization'
   },
+  organizationLogo: {
+    type: String,
+    default: null
+  },
   password: {
     type: String,
     required: true
   },
   role: {
     type: String,
-    enum: ['user', 'admin'],
+    enum: ['owner', 'manager', 'editor', 'viewer', 'user', 'admin'],
     default: 'user'
   },
   createdAt: {

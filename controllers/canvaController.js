@@ -51,6 +51,16 @@ async function getValidAccessToken(userId) {
       await config.save();
     } catch (error) {
       console.error('Failed to refresh Canva token:', error);
+      
+      // If token is revoked or invalid, disconnect the integration
+      if (error.message.includes('revoked') || error.message.includes('invalid_grant') || error.message.includes('expired')) {
+        config.accessToken = '';
+        config.refreshToken = '';
+        config.isConnected = false;
+        await config.save();
+        throw new Error('Canva connection lost or revoked. Please reconnect your account.');
+      }
+      
       throw new Error(`Canva authentication expired: ${error.message}`);
     }
   }
@@ -132,9 +142,11 @@ exports.saveConfig = async (req, res) => {
       config = new CanvaConfig({ userId: req.user.userId });
     }
 
-    if (clientId !== undefined) config.clientId = clientId;
-    if (clientSecret !== undefined) config.clientSecret = clientSecret;
-    if (redirectUri !== undefined) config.redirectUri = redirectUri;
+    if (clientId !== undefined) config.clientId = clientId || config.clientId;
+    if (redirectUri !== undefined) config.redirectUri = redirectUri || config.redirectUri;
+    if (clientSecret) {
+      config.clientSecret = clientSecret;
+    }
 
     await config.save();
 
@@ -187,7 +199,8 @@ exports.getAuthUrl = async (req, res) => {
       'asset:write',
       'folder:read',
       'folder:write',
-      'profile:read'
+      'profile:read',
+      'offline_access'
     ].join(' ');
 
     const authUrl = `https://www.canva.com/api/oauth/authorize?` + new URLSearchParams({
@@ -466,8 +479,9 @@ exports.autofillAndExport = async (req, res) => {
 // 10. List User's Personal Designs
 exports.listDesigns = async (req, res) => {
   try {
+    const ownership = req.query.ownership || 'any';
     const token = await getValidAccessToken(req.user.userId);
-    const response = await fetch('https://api.canva.com/rest/v1/designs', {
+    const response = await fetch(`https://api.canva.com/rest/v1/designs?ownership=${ownership}`, {
       headers: {
         'Authorization': `Bearer ${token}`
       }
@@ -533,9 +547,20 @@ exports.exportDesign = async (req, res) => {
       throw new Error('Export job succeeded but did not return download URLs');
     }
 
+    // Also fetch the design metadata to get the edit_url
+    const designResponse = await fetch(`https://api.canva.com/rest/v1/designs/${design_id}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    let editUrl = null;
+    if (designResponse.ok) {
+      const designData = await designResponse.json();
+      editUrl = designData?.design?.urls?.edit_url;
+    }
+
     res.json({
       success: true,
-      imageUrl: exportUrls[0]
+      imageUrl: exportUrls[0],
+      editUrl
     });
   } catch (error) {
     console.error('exportDesign error:', error);

@@ -857,6 +857,137 @@ class UserController {
     }
   }
   
+  // Get organization users
+  async getOrganizationUsers(req, res) {
+    try {
+      const currentUser = await User.findById(req.user.userId);
+      const orgName = currentUser.organizationName;
+      if (!orgName) {
+        return res.json({ success: true, data: [currentUser] });
+      }
+      
+      const users = await User.find({ organizationName: orgName }).select('-password -resetPasswordToken -resetPasswordExpires -twoFactorSecret');
+      res.json({
+        success: true,
+        data: users.map(u => ({
+          id: u._id,
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          status: 'Active' // We assume all returned are active for now
+        }))
+      });
+    } catch (error) {
+      console.error('Get organization users error:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch organization users' });
+    }
+  }
+
+  // Invite organization user
+  async inviteOrganizationUser(req, res) {
+    try {
+      const { name, email, role } = req.body;
+      const currentUser = await User.findById(req.user.userId);
+      const orgName = currentUser.organizationName;
+      
+      if (currentUser.role !== 'owner' && currentUser.role !== 'admin') {
+         return res.status(403).json({ success: false, message: 'Only owners or admins can invite users' });
+      }
+
+      const existingUser = await User.findOne({ email: email.toLowerCase() });
+      if (existingUser) {
+        return res.status(400).json({ success: false, message: 'User already exists' });
+      }
+
+      // Generate default password for invited user
+      const hashedPassword = await bcrypt.hash('Password123!', 12);
+      
+      const user = await User.create({
+        email: email.toLowerCase(),
+        password: hashedPassword,
+        name,
+        organizationName: orgName,
+        organizationLogo: currentUser.organizationLogo,
+        role: role || 'user'
+      });
+
+      res.status(201).json({
+        success: true,
+        data: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          status: 'Active'
+        },
+        message: 'User invited successfully'
+      });
+    } catch (error) {
+      console.error('Invite user error:', error);
+      res.status(500).json({ success: false, message: 'Failed to invite user' });
+    }
+  }
+
+  // Revoke organization user
+  async revokeOrganizationUser(req, res) {
+    try {
+      const { id } = req.params;
+      const currentUser = await User.findById(req.user.userId);
+      
+      if (currentUser.role !== 'owner' && currentUser.role !== 'admin') {
+         return res.status(403).json({ success: false, message: 'Only owners or admins can revoke access' });
+      }
+      
+      if (id === currentUser._id.toString()) {
+         return res.status(400).json({ success: false, message: 'Cannot revoke your own access' });
+      }
+
+      const targetUser = await User.findById(id);
+      if (!targetUser) {
+         return res.status(404).json({ success: false, message: 'User not found' });
+      }
+      
+      if (targetUser.organizationName !== currentUser.organizationName) {
+         return res.status(403).json({ success: false, message: 'User belongs to different organization' });
+      }
+      
+      if (targetUser.role === 'owner') {
+         return res.status(400).json({ success: false, message: 'Cannot revoke an owner' });
+      }
+
+      await User.deleteOne({ _id: id });
+      
+      res.json({ success: true, message: 'User access revoked' });
+    } catch (error) {
+      console.error('Revoke user error:', error);
+      res.status(500).json({ success: false, message: 'Failed to revoke user' });
+    }
+  }
+
+  // Update organization logo
+  async updateOrganizationLogo(req, res) {
+    try {
+      const { logo } = req.body;
+      const currentUser = await User.findById(req.user.userId);
+      const orgName = currentUser.organizationName;
+      
+      if (!logo) {
+         return res.status(400).json({ success: false, message: 'Logo is required' });
+      }
+      
+      // Update all users in the same organization
+      await User.updateMany(
+        { organizationName: orgName },
+        { organizationLogo: logo, updatedAt: new Date() }
+      );
+      
+      res.json({ success: true, data: { organizationLogo: logo }, message: 'Organization logo updated' });
+    } catch (error) {
+      console.error('Update organization logo error:', error);
+      res.status(500).json({ success: false, message: 'Failed to update organization logo' });
+    }
+  }
+
   // Export user data
   async exportUserData(req, res) {
     try {
@@ -921,7 +1052,7 @@ class UserController {
       });
     }
   }
-  
+
   // Helper: Get user statistics
   async getUserStats(userId) {
     const [campaignsCount, templatesCount, subscribersCount, sentEmails] = await Promise.all([

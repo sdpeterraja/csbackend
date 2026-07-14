@@ -15,70 +15,252 @@ async function registerMetaTemplate(config, template) {
     throw new Error("Missing Meta verification credentials. Map WABA ID and Token in Settings.");
   }
 
-  const components = [
-    {
-      type: "BODY",
-      text: template.bodyText
-    }
-  ];
+  // Remove any fields that Meta doesn't accept
+  const { status, ...cleanTemplate } = template;
 
-  if (template.headerType === "TEXT" && template.headerText) {
-    components.push({
+  // Helper function to sanitize text for Meta headers
+  const sanitizeHeaderText = (text) => {
+    if (!text) return text;
+    // Remove emojis
+    let sanitized = text.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '');
+    // Remove special characters except spaces, letters, numbers, and basic punctuation
+    sanitized = sanitized.replace(/[^a-zA-Z0-9\s.,!?'"()-]/g, '');
+    // Remove multiple spaces
+    sanitized = sanitized.replace(/\s+/g, ' ');
+    // Trim and limit to 60 characters
+    return sanitized.trim().substring(0, 60);
+  };
+
+  // Helper function to sanitize body text (allows placeholders but removes emojis)
+  const sanitizeBodyText = (text) => {
+    if (!text) return text;
+    // Remove emojis but keep placeholders {{1}}, {{2}}, etc.
+    let sanitized = text.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '');
+    return sanitized;
+  };
+
+  // Build components array for WhatsApp template
+  const components = [];
+
+  // 1. HEADER (optional)
+  if (cleanTemplate.headerType && cleanTemplate.headerType !== "NONE") {
+    const headerComponent = {
       type: "HEADER",
-      format: "TEXT",
-      text: template.headerText
-    });
-  } else if (template.headerType && template.headerType !== "NONE") {
-    components.push({
-      type: "HEADER",
-      format: template.headerType
-    });
-  }
+      format: cleanTemplate.headerType
+    };
 
-  if (template.footerText) {
-    components.push({
-      type: "FOOTER",
-      text: template.footerText
-    });
-  }
+    if (cleanTemplate.headerType === "TEXT" && cleanTemplate.headerText) {
+      // Sanitize header text - no emojis, formatting, or special characters
+      headerComponent.text = sanitizeHeaderText(cleanTemplate.headerText);
 
-  if (template.buttons && template.buttons.length > 0) {
-    const metaButtons = template.buttons.map((btn) => {
-      if (btn.type === "QUICK_REPLY") {
-        return { type: "QUICK_REPLY", text: btn.text };
-      } else if (btn.type === "URL") {
-        return { type: "URL", text: btn.text, url: btn.urlValue || "https://example.com" };
-      } else if (btn.type === "PHONE") {
-        return { type: "PHONE_NUMBER", text: btn.text, phone_number: btn.phoneValue || "+15551234567" };
+      // Validate that text is not empty after sanitization
+      if (!headerComponent.text) {
+        throw new Error("Header text is empty after sanitization. Please use plain text without emojis or special characters.");
       }
-    }).filter(Boolean);
-    components.push({
-      type: "BUTTONS",
-      buttons: metaButtons
-    });
+    } else if (["IMAGE", "VIDEO", "DOCUMENT"].includes(cleanTemplate.headerType)) {
+      if (cleanTemplate.headerMediaId) {
+        headerComponent.example = {
+          header_handle: cleanTemplate.headerMediaId
+        };
+      }
+    }
+
+    components.push(headerComponent);
   }
+
+  // 2. BODY (required)
+  const bodyText = sanitizeBodyText(cleanTemplate.bodyText || "");
+  if (!bodyText) {
+    throw new Error("Body text is required and cannot be empty.");
+  }
+
+  const bodyComponent = {
+    type: "BODY",
+    text: bodyText
+  };
+  components.push(bodyComponent);
+
+  // 3. FOOTER (optional)
+  if (cleanTemplate.footerText) {
+    // Footer text can have limited special characters
+    const footerText = cleanTemplate.footerText
+      .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
+      .substring(0, 60);
+
+    if (footerText) {
+      components.push({
+        type: "FOOTER",
+        text: footerText
+      });
+    }
+  }
+
+  // 4. BUTTONS (optional)
+  if (cleanTemplate.buttons && cleanTemplate.buttons.length > 0) {
+    const buttons = [];
+    let hasUrl = false;
+    let hasPhone = false;
+    let quickReplies = [];
+
+    for (const btn of cleanTemplate.buttons) {
+      // Button text must be 20 characters or less and no emojis
+      const buttonText = (btn.text || "")
+        .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
+        .substring(0, 20);
+
+      if (!buttonText) continue;
+
+      switch (btn.type) {
+        case "QUICK_REPLY":
+          quickReplies.push({
+            type: "QUICK_REPLY",
+            text: buttonText
+          });
+          break;
+
+        case "URL":
+          if (!hasUrl) {
+            const urlValue = btn.urlValue || "https://example.com";
+            // URL must be valid and use HTTPS
+            if (!urlValue.startsWith('https://') && !urlValue.startsWith('http://localhost')) {
+              throw new Error("URL must use HTTPS protocol");
+            }
+            buttons.push({
+              type: "URL",
+              text: buttonText,
+              url: urlValue
+            });
+            hasUrl = true;
+          }
+          break;
+
+        case "PHONE_NUMBER":
+          if (!hasPhone) {
+            const phoneValue = btn.phoneValue || "+15551234567";
+            if (!phoneValue.match(/^\+[1-9]\d{1,14}$/)) {
+              throw new Error("Phone number must be in E.164 format (e.g., +15551234567)");
+            }
+            buttons.push({
+              type: "PHONE_NUMBER",
+              text: buttonText,
+              phone_number: phoneValue
+            });
+            hasPhone = true;
+          }
+          break;
+
+        default:
+          break;
+      }
+    }
+
+    // WhatsApp rules: max 3 buttons, only 1 URL or PHONE, cannot mix URL and PHONE
+    let finalButtons = [];
+
+    if (hasUrl || hasPhone) {
+      const actionBtn = buttons.find(b => b.type === "URL" || b.type === "PHONE_NUMBER");
+      if (actionBtn) finalButtons.push(actionBtn);
+      if (quickReplies.length > 0) finalButtons.push(quickReplies[0]);
+    } else {
+      finalButtons = quickReplies.slice(0, 3);
+    }
+
+    if (finalButtons.length > 0) {
+      components.push({
+        type: "BUTTONS",
+        buttons: finalButtons
+      });
+    }
+  }
+
+  // Prepare the request body
+  const requestBody = {
+    name: cleanTemplate.name.toLowerCase().replace(/[^a-z0-9_]/g, "_"),
+    category: cleanTemplate.category || "MARKETING",
+    language: cleanTemplate.language || "en_US",
+    components: components
+  };
+
+  // Add examples for variable placeholders
+  if (cleanTemplate.examples && cleanTemplate.examples.length > 0) {
+    // Sanitize example values (remove emojis)
+    const sanitizedExamples = cleanTemplate.examples.map(example => {
+      if (Array.isArray(example)) {
+        return example.map(val => String(val).replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, ''));
+      }
+      return [String(example).replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')];
+    });
+
+    if (sanitizedExamples.some(ex => ex.some(val => val.length > 0))) {
+      requestBody.example = {
+        body_text: sanitizedExamples
+      };
+    }
+  }
+
+  // Log the request for debugging
+  console.log("Sending to Meta WhatsApp API:", JSON.stringify(requestBody, null, 2));
 
   const url = `https://graph.facebook.com/${apiVersion || "v20.0"}/${wabaId}/message_templates`;
-  
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${accessToken}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      name: template.name.toLowerCase().replace(/[^a-z0-9_]/g, "_"),
-      category: template.category,
-      language: template.language || "en_US",
-      components: components
-    })
-  });
 
-  const resData = await response.json();
-  if (!response.ok) {
-    throw new Error(resData.error?.message || `Meta Approval Registration Error (${response.status})`);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    const resData = await response.json();
+
+    if (!response.ok) {
+      console.error("Meta API Error Response:", JSON.stringify(resData, null, 2));
+
+      if (resData.error) {
+        let errorMessage = resData.error.message;
+
+        // Check for specific error subcodes
+        if (resData.error.error_subcode) {
+          switch (resData.error.error_subcode) {
+            case 2388072:
+              errorMessage = "Header format is incorrect. Remove emojis, new lines, formatting characters, and asterisks from the header text.";
+              break;
+            case 1002001:
+              errorMessage = "Template name already exists. Please use a unique name.";
+              break;
+            case 1002002:
+              errorMessage = "Invalid template category. Must be MARKETING, UTILITY, or AUTHENTICATION.";
+              break;
+            case 1002003:
+              errorMessage = "Invalid button type or configuration.";
+              break;
+            case 1002004:
+              errorMessage = "Invalid language code. Must be valid ISO language code.";
+              break;
+            case 1002005:
+              errorMessage = "Template body has invalid placeholders. Use {{1}}, {{2}}, etc.";
+              break;
+            default:
+              errorMessage = `${resData.error.message} (${resData.error.error_subcode})`;
+          }
+        }
+
+        throw new Error(`Meta API Error: ${errorMessage}`);
+      }
+      throw new Error(`Meta Approval Registration Error (${response.status})`);
+    }
+
+    // Return the created template
+    return {
+      ...resData,
+      status: "PENDING"
+    };
+  } catch (error) {
+    console.error("Failed to register template with Meta:", error);
+    throw error;
   }
-  return resData;
 }
 
 async function sendRealWhatsAppMessage(config, recipient, template) {
@@ -89,7 +271,7 @@ async function sendRealWhatsAppMessage(config, recipient, template) {
 
   const parameters = [];
   const paramCount = (template.bodyText.match(/\{\{\d+\}\}/g) || []).length;
-  
+
   // Re-map recipient variables
   const variablesMap = recipient.variables || {};
   const variablesObj = variablesMap instanceof Map ? Object.fromEntries(variablesMap) : variablesMap;
@@ -160,7 +342,7 @@ async function sendRealWhatsAppMessage(config, recipient, template) {
   }
 
   const url = `https://graph.facebook.com/${apiVersion || "v20.0"}/${phoneId}/messages`;
-  
+
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -196,18 +378,18 @@ async function executeAutomationsForWhatsAppReply(userId, fromPhone, textContent
 
       // Trigger is the first node
       const triggerNode = nodes[0];
-      const isWhatsAppReplyTrigger = 
-        triggerNode.type === "trigger" && 
-        (triggerNode.title?.toLowerCase().includes("whatsapp reply") || 
-         triggerNode.iconName === "MessageSquare" ||
-         triggerNode.id?.includes("whatsapp_reply"));
+      const isWhatsAppReplyTrigger =
+        triggerNode.type === "trigger" &&
+        (triggerNode.title?.toLowerCase().includes("whatsapp reply") ||
+          triggerNode.iconName === "MessageSquare" ||
+          triggerNode.id?.includes("whatsapp_reply"));
 
       if (!isWhatsAppReplyTrigger) continue;
 
       // Evaluate trigger filter keyword
       const triggerKeyword = triggerNode.keyword?.trim().toLowerCase();
       const cleanContent = textContent.trim().toLowerCase();
-      
+
       if (triggerKeyword && !cleanContent.includes(triggerKeyword)) {
         continue;
       }
@@ -287,7 +469,7 @@ async function handleStatusInline(userId, body) {
     for (const change of changes) {
       if (change.field === "messages" || change.field === "simulated_messages") {
         const value = change.value || {};
-        
+
         // Process statuses (delivery receipts)
         const statuses = value.statuses || [];
         for (const statusObj of statuses) {
@@ -440,7 +622,7 @@ async function runSchedulerCycle() {
 
       // Filter subdocuments pending sending
       const pendingRecipients = campaign.recipients.filter(r => r.status === "PENDING");
-      
+
       if (pendingRecipients.length === 0) {
         const processedCount = campaign.sentCount + campaign.failedCount;
         if (processedCount >= campaign.totalRecipients) {
@@ -457,7 +639,7 @@ async function runSchedulerCycle() {
       for (const recipient of toSend) {
         try {
           await sendRealWhatsAppMessage(config, recipient, template);
-          
+
           recipient.status = "SENT";
           recipient.sentAt = new Date().toISOString();
           campaign.sentCount++;
@@ -534,7 +716,7 @@ const whatsappController = {
       if (!config || !config.accessToken || !config.wabaId) {
         return res.status(400).json({ error: "Missing WhatsApp credentials. Please configure your Meta credentials in Settings before creating templates." });
       }
-      
+
       const freshTemplate = {
         userId: req.user.userId,
         id: `tpl_${Date.now()}`,
@@ -695,7 +877,7 @@ const whatsappController = {
       const body = req.body;
       if (body.object === "whatsapp_business_account" || body.object === "whatsapp_simulated") {
         const wabaId = body.entry?.[0]?.id;
-        
+
         // Find configuration mapping to identify user ID
         let userId = null;
         if (wabaId) {

@@ -56,8 +56,13 @@ app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan('dev')); // Logging
-
-
+const path = require('path');
+const fs = require('fs');
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+app.use('/uploads', express.static(uploadsDir));
 
 // Routes
 // In server.js, update your routes section:
@@ -79,6 +84,7 @@ const whatsappRoutes = require('./routes/whatsappRoutes');
 const whatsappController = require('./controllers/whatsappController');
 const aiRoutes = require('./routes/aiRoutes');
 const canvaRoutes = require('./routes/canvaRoutes');
+const uploadRoutes = require('./routes/uploadRoutes');
 
 // Routes - CORRECTED
 app.use('/api/auth', authRoutes);     // This gives: /api/auth/login, /api/auth/register
@@ -96,6 +102,7 @@ app.use('/api/automations', automationRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/canva', canvaRoutes);
+app.use('/api/upload', uploadRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
