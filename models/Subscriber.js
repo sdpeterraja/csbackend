@@ -9,9 +9,12 @@ const subscriberSchema = new mongoose.Schema({
   },
   email: {
     type: String,
-    required: true,
-    unique: true,
+    required: false,
     lowercase: true,
+    trim: true
+  },
+  phone: {
+    type: String,
     trim: true
   },
   name: {
@@ -113,7 +116,17 @@ const subscriberSchema = new mongoose.Schema({
 });
 
 // Indexes
-subscriberSchema.index({ userId: 1, email: 1 });
+// Create compound index so email is unique PER USER, but allow multiple missing emails (partial index)
+subscriberSchema.index(
+  { userId: 1, email: 1 }, 
+  { unique: true, partialFilterExpression: { email: { $type: "string" } } }
+);
+
+// Also add an index for phone numbers to prevent duplicate whatsapp contacts per user
+subscriberSchema.index(
+  { userId: 1, phone: 1 }, 
+  { unique: true, partialFilterExpression: { phone: { $type: "string" } } }
+);
 subscriberSchema.index({ userId: 1, status: 1 });
 subscriberSchema.index({ userId: 1, lists: 1 });
 subscriberSchema.index({ userId: 1, segments: 1 });

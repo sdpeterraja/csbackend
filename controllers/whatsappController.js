@@ -791,6 +791,33 @@ const whatsappController = {
         }))
       });
 
+      // Auto-save WhatsApp recipients as contacts
+      if (recipients && recipients.length > 0) {
+        try {
+          const Subscriber = require('../models/Subscriber');
+          const bulkOps = recipients.map(r => {
+            const contactPhone = String(r.phone).trim();
+            return {
+              updateOne: {
+                filter: { userId: req.user.userId, phone: contactPhone },
+                update: { 
+                  $setOnInsert: { 
+                    name: r.name || 'WhatsApp Contact',
+                    status: 'subscribed',
+                    lists: ['WhatsApp Contacts']
+                  }
+                },
+                upsert: true
+              }
+            };
+          });
+          await Subscriber.bulkWrite(bulkOps, { ordered: false });
+          console.log(`Auto-saved ${recipients.length} whatsapp contacts from campaign`);
+        } catch (subErr) {
+          console.error('Error auto-saving whatsapp contacts:', subErr);
+        }
+      }
+
       res.status(201).json(newCampaign);
     } catch (error) {
       res.status(500).json({ error: error.message });

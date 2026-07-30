@@ -227,6 +227,29 @@ class CampaignController {
         }
       }
       
+      // Auto-save recipients as contacts
+      if (finalRecipients && finalRecipients.length > 0) {
+        try {
+          const bulkOps = finalRecipients.map(recipient => ({
+            updateOne: {
+              filter: { userId: req.user.userId, email: recipient.email.toLowerCase() },
+              update: { 
+                $setOnInsert: { 
+                  name: recipient.name || '',
+                  status: 'subscribed',
+                  lists: ['Campaign Added']
+                }
+              },
+              upsert: true
+            }
+          }));
+          await Subscriber.bulkWrite(bulkOps, { ordered: false });
+          console.log(`Auto-saved ${finalRecipients.length} contacts from campaign`);
+        } catch (subErr) {
+          console.error('Error saving campaign recipients as subscribers:', subErr);
+        }
+      }
+      
       res.status(201).json({
         success: true,
         data: campaign,
@@ -279,6 +302,29 @@ class CampaignController {
       Object.assign(campaign, updateData);
       campaign.updatedAt = new Date();
       await campaign.save();
+
+      // Auto-save recipients as contacts if they are being updated
+      if (updateData.recipients && updateData.recipients.length > 0) {
+        try {
+          const bulkOps = updateData.recipients.map(recipient => ({
+            updateOne: {
+              filter: { userId: req.user.userId, email: recipient.email.toLowerCase() },
+              update: { 
+                $setOnInsert: { 
+                  name: recipient.name || '',
+                  status: 'subscribed',
+                  lists: ['Campaign Added']
+                }
+              },
+              upsert: true
+            }
+          }));
+          await Subscriber.bulkWrite(bulkOps, { ordered: false });
+          console.log(`Auto-saved ${updateData.recipients.length} contacts from updated campaign`);
+        } catch (subErr) {
+          console.error('Error saving updated campaign recipients as subscribers:', subErr);
+        }
+      }
       
       res.json({
         success: true,
@@ -351,6 +397,49 @@ async sendCampaign(req, res) {
     let brevoCampaignId = null;
     let brevoMessageId = null;
     const messageIds = [];
+    
+    // Auto-save recipients as contacts before sending to ensure they exist
+    if (campaign.recipients && campaign.recipients.length > 0) {
+      try {
+        const bulkOps = campaign.recipients.map(recipient => ({
+          updateOne: {
+            filter: { userId: req.user.userId, email: recipient.email.toLowerCase() },
+            update: { 
+              $setOnInsert: { 
+                name: recipient.name || '',
+                status: 'subscribed',
+                lists: ['Campaign Added']
+              }
+            },
+            upsert: true
+          }
+        }));
+        await Subscriber.bulkWrite(bulkOps, { ordered: false });
+        console.log(`Auto-saved ${campaign.recipients.length} contacts before sending campaign`);
+      } catch (subErr) {
+        console.error('Error auto-saving contacts during send:', subErr);
+      }
+    } else if (campaign.targetEmails && campaign.targetEmails.length > 0) {
+      try {
+        const bulkOps = campaign.targetEmails.map(email => ({
+          updateOne: {
+            filter: { userId: req.user.userId, email: email.toLowerCase() },
+            update: { 
+              $setOnInsert: { 
+                name: email.split('@')[0],
+                status: 'subscribed',
+                lists: ['Campaign Added']
+              }
+            },
+            upsert: true
+          }
+        }));
+        await Subscriber.bulkWrite(bulkOps, { ordered: false });
+        console.log(`Auto-saved ${campaign.targetEmails.length} contacts from targetEmails before sending`);
+      } catch (subErr) {
+        console.error('Error auto-saving targetEmails during send:', subErr);
+      }
+    }
     
     // Case 1: Send to individual personalized recipients (Transactional API)
     if (campaign.recipients && campaign.recipients.length > 0) {
