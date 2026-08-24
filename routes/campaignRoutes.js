@@ -13,6 +13,7 @@ router.get('/:id', campaignController.getCampaign);         // GET /api/campaign
 router.post('/', campaignController.createCampaign);        // POST /api/campaigns
 router.put('/:id', campaignController.updateCampaign);      // PUT /api/campaigns/:id
 router.delete('/:id', campaignController.deleteCampaign);   // DELETE /api/campaigns/:id
+router.post('/bulk-delete', campaignController.bulkDelete); // POST /api/campaigns/bulk-delete
 
 // Campaign actions
 router.post('/:id/send', campaignController.sendCampaign);       // POST /api/campaigns/:id/send

@@ -229,6 +229,66 @@ class TemplateController {
       });
     }
   }
+
+  // Bulk delete templates
+  async bulkDelete(req, res) {
+    try {
+      const { ids } = req.body;
+      
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please provide an array of template IDs to delete'
+        });
+      }
+
+      const templates = await Template.find({
+        _id: { $in: ids },
+        userId: req.user.userId
+      });
+
+      if (templates.length === 0) {
+        return res.json({
+          success: true,
+          message: 'No templates found or already deleted'
+        });
+      }
+
+      let deletedCount = 0;
+      let archivedCount = 0;
+
+      for (const template of templates) {
+        // Check if template is used in any campaign
+        const campaignsUsing = await Campaign.countDocuments({
+          templateId: template._id,
+          status: { $ne: 'draft' }
+        });
+        
+        if (campaignsUsing > 0) {
+          // Soft delete
+          template.isActive = false;
+          await template.save();
+          archivedCount++;
+        } else {
+          // Hard delete
+          await template.deleteOne();
+          deletedCount++;
+        }
+      }
+
+      res.json({
+        success: true,
+        data: { deletedCount, archivedCount },
+        message: `Successfully deleted ${deletedCount} and archived ${archivedCount} templates`
+      });
+    } catch (error) {
+      console.error('Bulk delete templates error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to bulk delete templates'
+      });
+    }
+  }
   
   // Toggle favorite
   async toggleFavorite(req, res) {

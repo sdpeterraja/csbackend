@@ -11,6 +11,7 @@ router.get('/:id', templateController.getTemplate);
 router.post('/', templateController.createTemplate);
 router.put('/:id', templateController.updateTemplate);
 router.delete('/:id', templateController.deleteTemplate);
+router.post('/bulk-delete', templateController.bulkDelete);
 router.post('/:id/favorite', templateController.toggleFavorite);
 router.post('/:id/increment-usage', templateController.incrementUsage);
 

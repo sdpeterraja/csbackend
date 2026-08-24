@@ -932,6 +932,45 @@ async sendCampaign(req, res) {
       });
     }
   }
+
+  // Bulk delete campaigns
+  async bulkDelete(req, res) {
+    try {
+      const { ids } = req.body;
+      
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please provide an array of campaign IDs to delete'
+        });
+      }
+      
+      // Ensure we only delete campaigns belonging to the user
+      // and not currently sending
+      const result = await Campaign.deleteMany({
+        _id: { $in: ids },
+        userId: req.user.userId,
+        status: { $ne: 'sending' }
+      });
+      
+      // Also delete associated campaign events
+      await CampaignEvent.deleteMany({
+        campaignId: { $in: ids }
+      });
+      
+      res.json({
+        success: true,
+        data: { deletedCount: result.deletedCount },
+        message: `Successfully deleted ${result.deletedCount} campaigns`
+      });
+    } catch (error) {
+      console.error('Bulk delete campaigns error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to bulk delete campaigns'
+      });
+    }
+  }
   
   // Get campaign statistics (ONLY stats data)
   async getCampaignStats(req, res) {
