@@ -113,6 +113,23 @@ class AuthController {
         { expiresIn: '7d' }
       );
       
+      // Get the admin's logo if available
+      let logo = user.organizationLogo;
+      if (user.organizationName) {
+        // Find an admin/owner with a logo in this organization
+        const adminWithLogo = await User.findOne({
+          organizationName: user.organizationName,
+          role: { $in: ['admin', 'owner'] },
+          organizationLogo: { $ne: null }
+        });
+        
+        if (adminWithLogo && adminWithLogo.organizationLogo) {
+          logo = adminWithLogo.organizationLogo;
+        }
+      }
+      
+      console.log('Login: email=', email, 'logo length=', logo ? logo.length : 0);
+      
       res.json({
         success: true,
         data: {
@@ -121,7 +138,8 @@ class AuthController {
             email: user.email,
             name: user.name,
             role: user.role,
-            organizationName: user.organizationName
+            organizationName: user.organizationName,
+            organizationLogo: logo
           },
           token
         }
@@ -138,12 +156,16 @@ class AuthController {
   // Get current user
   async getMe(req, res) {
     try {
-      const user = await User.findById(req.user.userId).select('-password');
+      let user = await User.findById(req.user.authUserId).select('-password').lean();
       if (!user) {
         return res.status(404).json({
           success: false,
           message: 'User not found'
         });
+      }
+      
+      if (req.user.organizationLogo) {
+        user.organizationLogo = req.user.organizationLogo;
       }
       
       res.json({
@@ -163,7 +185,7 @@ class AuthController {
   async changePassword(req, res) {
     try {
       const { currentPassword, newPassword } = req.body;
-      const user = await User.findById(req.user.userId);
+      const user = await User.findById(req.user.authUserId);
       
       if (!user) {
         return res.status(404).json({

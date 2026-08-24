@@ -21,14 +21,19 @@ class UserController {
   // Get user profile
   async getProfile(req, res) {
     try {
-      const user = await User.findById(req.user.userId)
-        .select('-password -resetPasswordToken -resetPasswordExpires -twoFactorSecret');
+      let user = await User.findById(req.user.authUserId)
+        .select('-password -resetPasswordToken -resetPasswordExpires -twoFactorSecret')
+        .lean();
       
       if (!user) {
         return res.status(404).json({
           success: false,
           message: 'User not found'
         });
+      }
+      
+      if (req.user.organizationLogo) {
+        user.organizationLogo = req.user.organizationLogo;
       }
       
       // Get Brevo connection status
@@ -72,7 +77,7 @@ class UserController {
       if (email) {
         const existingUser = await User.findOne({ 
           email: email.toLowerCase(),
-          _id: { $ne: req.user.userId }
+          _id: { $ne: req.user.authUserId }
         });
         
         if (existingUser) {
@@ -84,7 +89,7 @@ class UserController {
       }
       
       const user = await User.findByIdAndUpdate(
-        req.user.userId,
+        req.user.authUserId,
         { ...updateData, updatedAt: new Date() },
         { new: true }
       ).select('-password');
@@ -125,7 +130,7 @@ class UserController {
       }
       
       const user = await User.findByIdAndUpdate(
-        req.user.userId,
+        req.user.authUserId,
         { avatar, updatedAt: new Date() },
         { new: true }
       ).select('-password');
@@ -147,7 +152,7 @@ class UserController {
   // Remove avatar
   async removeAvatar(req, res) {
     try {
-      await User.findByIdAndUpdate(req.user.userId, {
+      await User.findByIdAndUpdate(req.user.authUserId, {
         $unset: { avatar: 1 },
         updatedAt: new Date()
       });
@@ -196,7 +201,7 @@ class UserController {
       );
       
       const user = await User.findByIdAndUpdate(
-        req.user.userId,
+        req.user.authUserId,
         { 
           settings,
           updatedAt: new Date()
@@ -221,7 +226,7 @@ class UserController {
   // Get user settings
   async getSettings(req, res) {
     try {
-      const user = await User.findById(req.user.userId)
+      const user = await User.findById(req.user.authUserId)
         .select('settings preferences notifications');
       
       res.json({
@@ -260,7 +265,7 @@ class UserController {
         });
       }
       
-      const user = await User.findById(req.user.userId);
+      const user = await User.findById(req.user.authUserId);
       
       // Verify current password
       const isValid = await bcrypt.compare(currentPassword, user.password);
@@ -379,7 +384,7 @@ class UserController {
   // Enable two-factor authentication
   async enable2FA(req, res) {
     try {
-      const user = await User.findById(req.user.userId);
+      const user = await User.findById(req.user.authUserId);
       
       // Generate 2FA secret
       const secret = crypto.randomBytes(20).toString('hex');
@@ -410,7 +415,7 @@ class UserController {
   async verify2FA(req, res) {
     try {
       const { token } = req.body;
-      const user = await User.findById(req.user.userId);
+      const user = await User.findById(req.user.authUserId);
       
       // In production, verify TOTP token
       // For now, simple verification
@@ -440,7 +445,7 @@ class UserController {
   // Disable two-factor authentication
   async disable2FA(req, res) {
     try {
-      const user = await User.findById(req.user.userId);
+      const user = await User.findById(req.user.authUserId);
       
       user.twoFactorSecret = undefined;
       user.twoFactorEnabled = false;
@@ -477,7 +482,7 @@ class UserController {
       );
       
       const user = await User.findByIdAndUpdate(
-        req.user.userId,
+        req.user.authUserId,
         { 
           preferences,
           updatedAt: new Date()
@@ -502,7 +507,7 @@ class UserController {
   // Get user preferences
   async getPreferences(req, res) {
     try {
-      const user = await User.findById(req.user.userId).select('preferences');
+      const user = await User.findById(req.user.authUserId).select('preferences');
       
       res.json({
         success: true,
@@ -520,7 +525,7 @@ class UserController {
   // Get API keys
   async getApiKeys(req, res) {
     try {
-      const user = await User.findById(req.user.userId).select('apiKeys');
+      const user = await User.findById(req.user.authUserId).select('apiKeys');
       
       // Mask API keys for security
       const maskedKeys = (user.apiKeys || []).map(key => ({
@@ -568,7 +573,7 @@ class UserController {
       };
       
       const user = await User.findByIdAndUpdate(
-        req.user.userId,
+        req.user.authUserId,
         { 
           $push: { apiKeys: newApiKey },
           updatedAt: new Date()
@@ -601,7 +606,7 @@ class UserController {
       const { keyId } = req.params;
       
       const user = await User.findByIdAndUpdate(
-        req.user.userId,
+        req.user.authUserId,
         { 
           $pull: { apiKeys: { id: keyId } },
           updatedAt: new Date()
@@ -634,7 +639,7 @@ class UserController {
     try {
       const { password } = req.body;
       
-      const user = await User.findById(req.user.userId);
+      const user = await User.findById(req.user.authUserId);
       
       // Verify password
       const isValid = await bcrypt.compare(password, user.password);
@@ -713,7 +718,7 @@ class UserController {
       const { page = 1, limit = 20 } = req.query;
       const skip = (parseInt(page) - 1) * parseInt(limit);
       
-      const user = await User.findById(req.user.userId)
+      const user = await User.findById(req.user.authUserId)
         .select('activityLog')
         .slice('activityLog', [skip, parseInt(limit)]);
       
@@ -817,7 +822,7 @@ class UserController {
       );
       
       const user = await User.findByIdAndUpdate(
-        req.user.userId,
+        req.user.authUserId,
         { 
           notifications,
           updatedAt: new Date()
@@ -842,7 +847,7 @@ class UserController {
   // Get notification settings
   async getNotificationSettings(req, res) {
     try {
-      const user = await User.findById(req.user.userId).select('notifications');
+      const user = await User.findById(req.user.authUserId).select('notifications');
       
       res.json({
         success: true,
@@ -860,7 +865,7 @@ class UserController {
   // Get organization users
   async getOrganizationUsers(req, res) {
     try {
-      const currentUser = await User.findById(req.user.userId);
+      const currentUser = await User.findById(req.user.authUserId);
       const orgName = currentUser.organizationName;
       if (!orgName) {
         return res.json({ success: true, data: [currentUser] });
@@ -887,7 +892,7 @@ class UserController {
   async inviteOrganizationUser(req, res) {
     try {
       const { name, email, role } = req.body;
-      const currentUser = await User.findById(req.user.userId);
+      const currentUser = await User.findById(req.user.authUserId);
       const orgName = currentUser.organizationName;
       
       if (currentUser.role !== 'owner' && currentUser.role !== 'admin') {
@@ -932,7 +937,7 @@ class UserController {
   async revokeOrganizationUser(req, res) {
     try {
       const { id } = req.params;
-      const currentUser = await User.findById(req.user.userId);
+      const currentUser = await User.findById(req.user.authUserId);
       
       if (currentUser.role !== 'owner' && currentUser.role !== 'admin') {
          return res.status(403).json({ success: false, message: 'Only owners or admins can revoke access' });
@@ -968,18 +973,25 @@ class UserController {
   async updateOrganizationLogo(req, res) {
     try {
       const { logo } = req.body;
-      const currentUser = await User.findById(req.user.userId);
+      const currentUser = await User.findById(req.user.authUserId);
       const orgName = currentUser.organizationName;
       
       if (!logo) {
          return res.status(400).json({ success: false, message: 'Logo is required' });
       }
       
-      // Update all users in the same organization
-      await User.updateMany(
-        { organizationName: orgName },
-        { organizationLogo: logo, updatedAt: new Date() }
-      );
+      // Update the current user directly
+      currentUser.organizationLogo = logo;
+      currentUser.updatedAt = new Date();
+      await currentUser.save();
+      
+      // Update all other users in the same organization
+      if (orgName) {
+        await User.updateMany(
+          { organizationName: orgName, _id: { $ne: currentUser._id } },
+          { organizationLogo: logo, updatedAt: new Date() }
+        );
+      }
       
       res.json({ success: true, data: { organizationLogo: logo }, message: 'Organization logo updated' });
     } catch (error) {
@@ -991,15 +1003,16 @@ class UserController {
   // Export user data
   async exportUserData(req, res) {
     try {
-      const userId = req.user.userId;
+      const authUserId = req.user.authUserId;
+      const resourceUserId = req.user.userId;
       
       // Fetch all user data
       const [user, brevoConfig, campaigns, templates, subscribers] = await Promise.all([
-        User.findById(userId).select('-password -resetPasswordToken -resetPasswordExpires -deletionToken'),
-        BrevoConfig.findOne({ userId }),
-        Campaign.find({ userId }).lean(),
-        Template.find({ userId }).lean(),
-        Subscriber.find({ userId }).lean()
+        User.findById(authUserId).select('-password -resetPasswordToken -resetPasswordExpires -deletionToken'),
+        BrevoConfig.findOne({ userId: resourceUserId }),
+        Campaign.find({ userId: resourceUserId }).lean(),
+        Template.find({ userId: resourceUserId }).lean(),
+        Subscriber.find({ userId: resourceUserId }).lean()
       ]);
       
       const exportData = {

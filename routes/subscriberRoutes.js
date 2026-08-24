@@ -11,21 +11,11 @@ router.use(authenticateUser);
 router.get('/', subscriberController.getSubscribers);
 router.get('/stats', subscriberController.getSubscriberStats);
 router.get('/export', subscriberController.exportSubscribers);
-router.get('/:id', subscriberController.getSubscriber);
 router.post('/', subscriberController.createSubscriber);
-router.put('/:id', subscriberController.updateSubscriber);
-router.delete('/:id', subscriberController.deleteSubscriber);
-
 // Bulk operations
 router.post('/bulk-import', subscriberController.bulkImport);
 router.post('/bulk-delete', subscriberController.bulkDelete);
 router.post('/bulk-update', subscriberController.bulkUpdate);
-
-// Subscriber management
-router.post('/:id/unsubscribe', subscriberController.unsubscribe);
-router.post('/:id/resubscribe', subscriberController.resubscribe);
-router.post('/:id/add-to-list', subscriberController.addToList);
-router.post('/:id/remove-from-list', subscriberController.removeFromList);
 
 // List management
 router.get('/lists/all', subscriberController.getAllLists);
@@ -45,7 +35,17 @@ router.get('/analytics/overview', subscriberController.getAnalytics);
 router.get('/analytics/growth', subscriberController.getGrowthData);
 router.get('/analytics/engagement', subscriberController.getEngagementData);
 
-// Tags
+// Search
+router.get('/search/:query', subscriberController.searchSubscribers);
+
+// Single subscriber CRUD and management (Wildcard routes must go last)
+router.get('/:id', subscriberController.getSubscriber);
+router.put('/:id', subscriberController.updateSubscriber);
+router.delete('/:id', subscriberController.deleteSubscriber);
+router.post('/:id/unsubscribe', subscriberController.unsubscribe);
+router.post('/:id/resubscribe', subscriberController.resubscribe);
+router.post('/:id/add-to-list', subscriberController.addToList);
+router.post('/:id/remove-from-list', subscriberController.removeFromList);
 router.post('/:id/tags', subscriberController.addTags);
 router.delete('/:id/tags', subscriberController.removeTags);
 

@@ -1,5 +1,6 @@
 // middleware/auth.js
 const jwt = require('jsonwebtoken');
+const User = require('../models/User');
 
 const authenticateUser = async (req, res, next) => {
   try {
@@ -13,7 +14,40 @@ const authenticateUser = async (req, res, next) => {
     }
     
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = { userId: decoded.userId, email: decoded.email };
+    
+    let effectiveUserId = decoded.userId;
+    let adminUser = null;
+    
+    // Multi-tenancy: find organization admin to share resources
+    const currentUser = await User.findById(decoded.userId);
+    if (currentUser && currentUser.organizationName) {
+      adminUser = await User.findOne({
+        organizationName: currentUser.organizationName,
+        role: { $in: ['admin', 'owner'] },
+        organizationLogo: { $ne: null }
+      }).sort({ createdAt: 1 });
+      
+      // Fallback if no admin has a logo but there is an admin
+      if (!adminUser) {
+        adminUser = await User.findOne({
+          organizationName: currentUser.organizationName,
+          role: { $in: ['admin', 'owner'] }
+        }).sort({ createdAt: 1 });
+      }
+      
+      if (adminUser) {
+        effectiveUserId = adminUser._id.toString();
+      }
+    }
+    
+    req.user = { 
+      userId: effectiveUserId, // effective tenant ID for resources
+      authUserId: decoded.userId, // actual authenticated user ID
+      email: decoded.email,
+      organizationName: currentUser?.organizationName || null,
+      organizationLogo: adminUser ? adminUser.organizationLogo : currentUser?.organizationLogo,
+      role: currentUser?.role || 'user'
+    };
     
     next();
   } catch (error) {
