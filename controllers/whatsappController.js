@@ -15,6 +15,18 @@ async function registerMetaTemplate(config, template) {
     throw new Error("Missing Meta verification credentials. Map WABA ID and Token in Settings.");
   }
 
+  // 1. Get App ID from Token for Resumable Uploads
+  let appId = null;
+  try {
+    const debugRes = await fetch(`https://graph.facebook.com/${apiVersion || "v20.0"}/debug_token?input_token=${accessToken}&access_token=${accessToken}`);
+    const debugData = await debugRes.json();
+    if (debugData.data && debugData.data.app_id) {
+      appId = debugData.data.app_id;
+    }
+  } catch (e) {
+    console.error("Error fetching app_id from debug_token", e);
+  }
+
   // Remove any fields that Meta doesn't accept
   const { status, ...cleanTemplate } = template;
 
@@ -58,14 +70,65 @@ async function registerMetaTemplate(config, template) {
         throw new Error("Header text is empty after sanitization. Please use plain text without emojis or special characters.");
       }
     } else if (["IMAGE", "VIDEO", "DOCUMENT"].includes(cleanTemplate.headerType)) {
+      let finalHeaderHandle = cleanTemplate.headerMediaId;
+
       if (cleanTemplate.sampleImageLink) {
+        if (!appId) throw new Error("Could not fetch App ID needed for Meta Resumable Upload API. Ensure your token is valid.");
+        
+        try {
+          const imgRes = await fetch(cleanTemplate.sampleImageLink);
+          if (imgRes.ok) {
+            const arrayBuffer = await imgRes.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            const mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
+            const fileLength = buffer.length;
+
+            // 1. Create upload session
+            const sessionRes = await fetch(`https://graph.facebook.com/${apiVersion || "v20.0"}/${appId}/uploads?file_length=${fileLength}&file_type=${mimeType}`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${accessToken}` }
+            });
+            const sessionData = await sessionRes.json();
+            
+            if (sessionRes.ok && sessionData.id) {
+              const uploadSessionId = sessionData.id;
+              
+              // 2. Upload file
+              const uploadRes = await fetch(`https://graph.facebook.com/${apiVersion || "v20.0"}/${uploadSessionId}`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `OAuth ${accessToken}`,
+                  'file_offset': '0',
+                  'Content-Type': mimeType
+                },
+                body: buffer
+              });
+              const uploadData = await uploadRes.json();
+              if (uploadRes.ok && uploadData.h) {
+                finalHeaderHandle = uploadData.h;
+              } else {
+                console.error("Meta resumable upload failed:", uploadData);
+                throw new Error(uploadData.error?.message || "Failed to complete resumable upload to Meta.");
+              }
+            } else {
+              console.error("Meta session creation failed:", sessionData);
+              throw new Error(sessionData.error?.message || "Failed to start resumable upload session.");
+            }
+          } else {
+            throw new Error(`Failed to fetch image from R2. Status: ${imgRes.status}`);
+          }
+        } catch (uploadErr) {
+          console.error("Error uploading sample image to Meta:", uploadErr);
+          throw new Error(`Meta media upload error: ${uploadErr.message}`);
+        }
+      }
+
+      if (finalHeaderHandle) {
         headerComponent.example = {
-          header_url: [cleanTemplate.sampleImageLink]
+          header_handle: [finalHeaderHandle]
         };
-      } else if (cleanTemplate.headerMediaId) {
-        headerComponent.example = {
-          header_handle: [cleanTemplate.headerMediaId] // Note: Meta expects an array
-        };
+      } else {
+        throw new Error("Meta requires a sample image handle. Please upload a sample image.");
       }
     }
 
@@ -93,9 +156,10 @@ async function registerMetaTemplate(config, template) {
       );
     }
     
-    // Fill in missing dummy examples
+    // Fill in missing dummy examples with realistic data to pass Meta guidelines
+    const realisticDummies = ["Peter", "Order #12345", "AEROBAY FREIGHT", "Monday", "50%", "Tracking #9876"];
     while (exampleParams.length < paramCount) {
-      exampleParams.push(`SampleText${exampleParams.length + 1}`);
+      exampleParams.push(realisticDummies[exampleParams.length % realisticDummies.length]);
     }
 
     bodyComponent.example = {
