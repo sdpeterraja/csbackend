@@ -58,9 +58,13 @@ async function registerMetaTemplate(config, template) {
         throw new Error("Header text is empty after sanitization. Please use plain text without emojis or special characters.");
       }
     } else if (["IMAGE", "VIDEO", "DOCUMENT"].includes(cleanTemplate.headerType)) {
-      if (cleanTemplate.headerMediaId) {
+      if (cleanTemplate.sampleImageLink) {
         headerComponent.example = {
-          header_handle: cleanTemplate.headerMediaId
+          header_url: [cleanTemplate.sampleImageLink]
+        };
+      } else if (cleanTemplate.headerMediaId) {
+        headerComponent.example = {
+          header_handle: [cleanTemplate.headerMediaId] // Note: Meta expects an array
         };
       }
     }
