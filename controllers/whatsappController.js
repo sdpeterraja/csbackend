@@ -10,9 +10,9 @@ const Automation = require('../models/Automation');
 // ----------------------------------------------------
 
 async function registerMetaTemplate(config, template) {
-  const { wabaId, accessToken, apiVersion, phoneId } = config;
-  if (!wabaId || !accessToken || !phoneId) {
-    throw new Error("Missing Meta verification credentials. Map WABA ID, Phone ID, and Token in Settings.");
+  const { wabaId, accessToken, apiVersion } = config;
+  if (!wabaId || !accessToken) {
+    throw new Error("Missing Meta verification credentials. Map WABA ID and Token in Settings.");
   }
 
   // Remove any fields that Meta doesn't accept
@@ -58,56 +58,14 @@ async function registerMetaTemplate(config, template) {
         throw new Error("Header text is empty after sanitization. Please use plain text without emojis or special characters.");
       }
     } else if (["IMAGE", "VIDEO", "DOCUMENT"].includes(cleanTemplate.headerType)) {
-      let finalHeaderHandle = cleanTemplate.headerMediaId;
-
       if (cleanTemplate.sampleImageLink) {
-        try {
-          const imgRes = await fetch(cleanTemplate.sampleImageLink);
-          if (imgRes.ok) {
-            const arrayBuffer = await imgRes.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
-            const mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
-            
-            const boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
-            let postData = [];
-            postData.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="messaging_product"\r\n\r\nwhatsapp\r\n`));
-            postData.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="sample_image.jpg"\r\nContent-Type: ${mimeType}\r\n\r\n`));
-            postData.push(buffer);
-            postData.push(Buffer.from(`\r\n--${boundary}--\r\n`));
-            
-            const bodyBuffer = Buffer.concat(postData);
-
-            const metaUploadRes = await fetch(`https://graph.facebook.com/${apiVersion || "v20.0"}/${phoneId}/media`, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${accessToken}`,
-                'Content-Type': `multipart/form-data; boundary=${boundary}`
-              },
-              body: bodyBuffer
-            });
-            
-            const metaUploadData = await metaUploadRes.json();
-            if (metaUploadRes.ok && metaUploadData.id) {
-              finalHeaderHandle = metaUploadData.id;
-            } else {
-              console.error("Meta media upload failed:", metaUploadData);
-              throw new Error(metaUploadData.error?.message || "Failed to upload media to Meta.");
-            }
-          } else {
-            throw new Error(`Failed to fetch image from R2. Status: ${imgRes.status}`);
-          }
-        } catch (uploadErr) {
-          console.error("Error uploading sample image to Meta:", uploadErr);
-          throw new Error(`Meta media upload error: ${uploadErr.message}`);
-        }
-      }
-
-      if (finalHeaderHandle) {
         headerComponent.example = {
-          header_handle: [finalHeaderHandle]
+          header_url: [cleanTemplate.sampleImageLink]
         };
-      } else {
-        throw new Error("Meta requires a sample image handle. Please upload a sample image.");
+      } else if (cleanTemplate.headerMediaId) {
+        headerComponent.example = {
+          header_handle: [cleanTemplate.headerMediaId] // Note: Meta expects an array
+        };
       }
     }
 
