@@ -857,6 +857,7 @@ const whatsappController = {
   async getWebhookLogs(req, res) {
     try {
       const logs = await WhatsAppWebhookLog.find({ userId: req.user.userId }).sort({ timestamp: -1 });
+console.log(logs)
       res.json(logs);
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -878,7 +879,7 @@ const whatsappController = {
       const mode = req.query["hub.mode"];
       const token = req.query["hub.verify_token"];
       const challenge = req.query["hub.challenge"];
-
+ 
       if (mode && token) {
         if (mode === "subscribe") {
           // Check verify token matching any user's configuration
@@ -902,6 +903,7 @@ const whatsappController = {
   async postWebhook(req, res) {
     try {
       const body = req.body;
+console.log(body)
       if (body.object === "whatsapp_business_account" || body.object === "whatsapp_simulated") {
         const wabaId = body.entry?.[0]?.id;
 
