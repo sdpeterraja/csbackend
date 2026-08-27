@@ -14,7 +14,15 @@ dotenv.config();
 connectDB();
 
 const app = express();
+app.use(express.json({
+  limit: '10mb',
+  type: 'application/json'
+}));
 
+app.use(express.urlencoded({
+  extended: true,
+  limit: '10mb'
+}));
 // Middleware
 app.use(helmet()); // Security headers
 // app.use(cors({
@@ -69,6 +77,7 @@ app.use('/uploads', express.static(uploadsDir));
 // Routes
 // In server.js, update your routes section:
 // server.js - Fix the routes section
+
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
