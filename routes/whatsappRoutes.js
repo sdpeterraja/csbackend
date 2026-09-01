@@ -33,4 +33,10 @@ router.delete('/webhook-logs', whatsappController.deleteWebhookLogs);
 router.post('/webhook/simulate-reply', whatsappController.simulateReply);
 router.post('/webhook/simulate', whatsappController.simulateStatus);
 
+// Inbox
+router.get('/inbox/conversations', whatsappController.getConversations);
+router.get('/inbox/:phone', whatsappController.getConversationHistory);
+router.post('/inbox/:phone/reply', whatsappController.sendDirectReply);
+router.put('/inbox/:phone/crm', whatsappController.updateContactCrm);
+
 module.exports = router;

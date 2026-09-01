@@ -4,6 +4,8 @@ const WhatsAppTemplate = require('../models/WhatsAppTemplate');
 const WhatsAppCampaign = require('../models/WhatsAppCampaign');
 const WhatsAppWebhookLog = require('../models/WhatsAppWebhookLog');
 const Automation = require('../models/Automation');
+const WhatsAppMessage = require('../models/WhatsAppMessage');
+const WhatsAppContact = require('../models/WhatsAppContact');
 
 // ----------------------------------------------------
 // FACEBOOK GRAPH / WHATSAPP CLOUD API REQUEST PROXIES
@@ -547,8 +549,21 @@ async function handleStatusInline(userId, body) {
         for (const statusObj of statuses) {
           const statusName = statusObj.status;
           const recipientPhone = statusObj.recipient_id;
+          const messageId = statusObj.id;
           const errors = statusObj.errors || [];
           const failureReason = errors.length > 0 ? errors[0].message : undefined;
+
+          // Update WhatsAppMessage status for Inbox
+          if (messageId) {
+            try {
+              await WhatsAppMessage.findOneAndUpdate(
+                { messageId: messageId, userId: userId },
+                { $set: { status: statusName.toLowerCase() } }
+              );
+            } catch (err) {
+              console.error("Error updating WhatsAppMessage status:", err);
+            }
+          }
 
           // Find recipient across running campaigns for this user
           const campaign = await WhatsAppCampaign.findOne({
@@ -611,9 +626,14 @@ async function handleStatusInline(userId, body) {
 
         // Process message replies from customers
         const messages = value.messages || [];
+        const contacts = value.contacts || [];
+        const contactMap = {};
+        contacts.forEach(c => { if(c.wa_id) contactMap[c.wa_id] = c.profile?.name; });
+
         for (const msgObj of messages) {
           const fromPhone = msgObj.from;
           const msgType = msgObj.type;
+          const messageId = msgObj.id;
           let msgText = "";
 
           if (msgType === "text" && msgObj.text) {
@@ -624,6 +644,22 @@ async function handleStatusInline(userId, body) {
 
           if (msgText) {
             console.log(`💬 WhatsApp reply received from ${fromPhone}: "${msgText}"`);
+
+            // Save to WhatsAppMessage for Inbox feature
+            try {
+              await WhatsAppMessage.create({
+                userId,
+                phone: fromPhone,
+                contactName: contactMap[fromPhone] || 'Unknown Contact',
+                direction: 'inbound',
+                content: msgText,
+                messageId: messageId,
+                status: 'received',
+                timestamp: new Date()
+              });
+            } catch (err) {
+              console.error("Error saving inbound message to WhatsAppMessage:", err);
+            }
 
             // Write inbound message log entry
             await WhatsAppWebhookLog.create({
@@ -1134,6 +1170,193 @@ console.log(logs)
       res.json({ success: true, ...result });
     } catch (error) {
       console.error("Simulate status error:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+
+  // Inbox Endpoints
+  async getConversations(req, res) {
+    try {
+      const userId = req.user.userId;
+      const role = req.user.role;
+      const authUserId = req.user.authUserId;
+      
+      let pipeline = [
+        { $match: { userId: new mongoose.Types.ObjectId(userId) } },
+        { $sort: { timestamp: -1 } },
+        {
+          $group: {
+            _id: "$phone",
+            latestMessage: { $first: "$$ROOT" }
+          }
+        },
+        {
+          $lookup: {
+            from: "whatsappcontacts", // Mongoose pluralizes 'WhatsAppContact' to 'whatsappcontacts'
+            let: { phone_id: "$_id" },
+            pipeline: [
+              { $match:
+                  { $expr:
+                      { $and:
+                          [
+                            { $eq: [ "$phone",  "$$phone_id" ] },
+                            { $eq: [ "$userId", new mongoose.Types.ObjectId(userId) ] }
+                          ]
+                      }
+                  }
+              }
+            ],
+            as: "contactData"
+          }
+        },
+        {
+          $unwind: {
+            path: "$contactData",
+            preserveNullAndEmptyArrays: true
+          }
+        }
+      ];
+
+      // Role-based access control: agents only see assigned or unassigned
+      if (role !== 'admin' && role !== 'owner') {
+        pipeline.push({
+          $match: {
+            $or: [
+              { "contactData.assignedAgent": new mongoose.Types.ObjectId(authUserId) },
+              { "contactData.assignedAgent": { $exists: false } },
+              { "contactData.assignedAgent": null }
+            ]
+          }
+        });
+      }
+
+      pipeline.push({ $sort: { "latestMessage.timestamp": -1 } });
+
+      const conversations = await WhatsAppMessage.aggregate(pipeline);
+      
+      res.json({ success: true, conversations: conversations.map(c => ({
+        ...c.latestMessage,
+        crm: c.contactData || null
+      })) });
+    } catch (error) {
+      console.error("Error fetching conversations:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+
+  async getConversationHistory(req, res) {
+    try {
+      const userId = req.user.userId;
+      const role = req.user.role;
+      const authUserId = req.user.authUserId;
+      const phone = req.params.phone;
+      
+      const contact = await WhatsAppContact.findOne({ userId, phone });
+      
+      // Role-based access control checking
+      if (role !== 'admin' && role !== 'owner') {
+        if (contact && contact.assignedAgent && contact.assignedAgent.toString() !== authUserId.toString()) {
+          return res.status(403).json({ success: false, message: 'Forbidden: You do not have access to this conversation.' });
+        }
+      }
+
+      const messages = await WhatsAppMessage.find({ userId, phone }).sort({ timestamp: 1 });
+      res.json({ success: true, messages, contact });
+    } catch (error) {
+      console.error("Error fetching conversation history:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+
+  async updateContactCrm(req, res) {
+    try {
+      const userId = req.user.userId;
+      const phone = req.params.phone;
+      const { assignedAgent, labels, messageSequence, customField, notes, botReplyOn, email, name } = req.body;
+
+      const updatedContact = await WhatsAppContact.findOneAndUpdate(
+        { userId, phone },
+        { 
+          $set: {
+            assignedAgent,
+            labels,
+            messageSequence,
+            customField,
+            notes,
+            botReplyOn,
+            email,
+            name
+          }
+        },
+        { new: true, upsert: true } // Create if doesn't exist
+      );
+
+      res.json({ success: true, contact: updatedContact });
+    } catch (error) {
+      console.error("Error updating contact CRM:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+
+  async sendDirectReply(req, res) {
+    try {
+      const userId = req.user.userId;
+      const phone = req.params.phone;
+      const { text } = req.body;
+
+      if (!text) return res.status(400).json({ success: false, error: "Text is required" });
+
+      const config = await WhatsAppConfig.findOne({ userId });
+      if (!config || !config.accessToken || !config.phoneId) {
+        return res.status(400).json({ success: false, error: "WhatsApp credentials not configured" });
+      }
+
+      // Payload for free-form text message (requires 24h window)
+      const payload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: phone.replace(/[^0-9]/g, ""),
+        type: "text",
+        text: { preview_url: false, body: text }
+      };
+
+      const url = `https://graph.facebook.com/${config.apiVersion || "v20.0"}/${config.phoneId}/messages`;
+      
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${config.accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const resData = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(resData.error?.message || "Failed to send direct reply via Meta API");
+      }
+
+      const msgId = resData.messages?.[0]?.id || `out_${Date.now()}`;
+      
+      // Find contact name from history if exists
+      const lastMsg = await WhatsAppMessage.findOne({ userId, phone }).sort({ timestamp: -1 });
+      const contactName = lastMsg ? lastMsg.contactName : "Unknown Contact";
+
+      const newMsg = await WhatsAppMessage.create({
+        userId,
+        phone,
+        contactName,
+        direction: 'outbound',
+        content: text,
+        messageId: msgId,
+        status: 'sent',
+        timestamp: new Date()
+      });
+
+      res.json({ success: true, message: newMsg });
+    } catch (error) {
+      console.error("Error sending direct reply:", error);
       res.status(500).json({ success: false, error: error.message });
     }
   }
