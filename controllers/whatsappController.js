@@ -566,15 +566,27 @@ async function handleStatusInline(userId, body) {
           }
 
           // Find recipient across running campaigns for this user
-          const campaign = await WhatsAppCampaign.findOne({
+          let campaign = await WhatsAppCampaign.findOne({
             userId,
-            "recipients.phone": recipientPhone,
+            "recipients.messageId": messageId,
             status: { $in: ["RUNNING", "SCHEDULED", "COMPLETED"] }
           }).sort({ createdAt: -1 });
 
+          if (!campaign && recipientPhone) {
+            // Fallback: try to match phone number with regex in case messageId is missing
+            campaign = await WhatsAppCampaign.findOne({
+              userId,
+              "recipients.phone": { $regex: new RegExp(recipientPhone.replace(/[^0-9]/g, "") + "$") },
+              status: { $in: ["RUNNING", "SCHEDULED", "COMPLETED"] }
+            }).sort({ createdAt: -1 });
+          }
+
           if (campaign) {
-            const matchedRecipient = campaign.recipients.find(r => r.phone === recipientPhone && r.status !== "PENDING");
-            if (matchedRecipient) {
+            let matchedRecipient = campaign.recipients.find(r => r.messageId === messageId);
+            if (!matchedRecipient) {
+              matchedRecipient = campaign.recipients.find(r => r.phone.replace(/[^0-9]/g, "").endsWith(recipientPhone.replace(/[^0-9]/g, "")));
+            }
+            if (matchedRecipient && matchedRecipient.status !== "PENDING") {
               const statusOrder = { PENDING: 0, SENT: 1, DELIVERED: 2, READ: 3, FAILED: 4 };
               const currentStatus = matchedRecipient.status;
               const newStatusUpper = statusName.toUpperCase();
@@ -746,10 +758,13 @@ async function runSchedulerCycle() {
 
       for (const recipient of toSend) {
         try {
-          await sendRealWhatsAppMessage(config, recipient, template);
+          const resData = await sendRealWhatsAppMessage(config, recipient, template);
 
           recipient.status = "SENT";
           recipient.sentAt = new Date().toISOString();
+          if (resData && resData.messages && resData.messages.length > 0) {
+            recipient.messageId = resData.messages[0].id;
+          }
           campaign.sentCount++;
         } catch (apiErr) {
           console.error(`Meta Dispatch Error for ${recipient.phone}:`, apiErr.message);
