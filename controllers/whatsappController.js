@@ -975,7 +975,26 @@ console.log(logs)
   async postWebhook(req, res) {
     try {
       const body = req.body;
-console.log(body)
+      console.log("Raw Webhook Body:", JSON.stringify(body, null, 2));
+      
+      // Attempt to save raw incoming payload directly to the database for debugging
+      try {
+        const anyConfig = await WhatsAppConfig.findOne({});
+        const debugUserId = anyConfig ? anyConfig.userId : "system_debug";
+        await WhatsAppWebhookLog.create({
+          userId: debugUserId,
+          id: `weblog_raw_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          timestamp: new Date().toISOString(),
+          campaignName: "Raw Incoming Webhook",
+          phone: "Unknown",
+          status: "debug",
+          failureReason: "Raw payload capture",
+          rawPayload: JSON.stringify(body, null, 2)
+        });
+      } catch (logErr) {
+        console.error("Failed to write debug log:", logErr);
+      }
+
       if (body.object === "whatsapp_business_account" || body.object === "whatsapp_simulated") {
         const wabaId = body.entry?.[0]?.id;
 
@@ -1021,7 +1040,7 @@ console.log(body)
           return res.status(200).json({ success: true, processed: true, ...result });
         }
       }
-      return res.status(200).json({ success: true, warning: "unhandled object event type" });
+      return res.status(200).json({ success: true, warning: "unhandled object event type", receivedBody: body });
     } catch (error) {
       console.error("Error processing Webhook status:", error);
       return res.status(500).json({ success: false, error: "Internal processing error" });
