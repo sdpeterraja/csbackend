@@ -107,6 +107,7 @@ const whatsappController = require('./controllers/whatsappController');
 const aiRoutes = require('./routes/aiRoutes');
 const canvaRoutes = require('./routes/canvaRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+const billingRoutes = require('./routes/billingRoutes');
 
 // Routes - CORRECTED
 app.use('/api/auth', authRoutes);     // This gives: /api/auth/login, /api/auth/register
@@ -125,6 +126,7 @@ app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/canva', canvaRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/billing', billingRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

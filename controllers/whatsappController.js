@@ -586,9 +586,9 @@ async function handleStatusInline(userId, body) {
             if (!matchedRecipient) {
               matchedRecipient = campaign.recipients.find(r => r.phone.replace(/[^0-9]/g, "").endsWith(recipientPhone.replace(/[^0-9]/g, "")));
             }
-            if (matchedRecipient && matchedRecipient.status !== "PENDING") {
+            if (matchedRecipient) {
               const statusOrder = { PENDING: 0, SENT: 1, DELIVERED: 2, READ: 3, FAILED: 4 };
-              const currentStatus = matchedRecipient.status;
+              const currentStatus = matchedRecipient.status || "PENDING";
               const newStatusUpper = statusName.toUpperCase();
 
               if (
@@ -616,6 +616,7 @@ async function handleStatusInline(userId, body) {
                   campaign.status = "COMPLETED";
                 }
 
+                campaign.markModified('recipients');
                 await campaign.save();
               }
             }

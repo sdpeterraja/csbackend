@@ -9,7 +9,8 @@ const recipientSchema = new mongoose.Schema({
   sentAt: String,
   deliveredAt: String,
   readAt: String,
-  failureReason: String
+  failureReason: String,
+  messageId: String
 }, { _id: false, minimize: false, strict: false });
 
 const whatsAppCampaignSchema = new mongoose.Schema({
