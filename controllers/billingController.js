@@ -11,6 +11,55 @@ class BillingController {
   async getUsageAndCharges(req, res) {
     try {
       const userId = req.user?.userId;
+      const now = new Date();
+      const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      const endOfCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+
+      const getDocDate = (doc) => {
+        if (!doc) return null;
+        const raw = doc.createdAt || doc.date || doc.scheduledAt || doc.sentAt;
+        if (raw) {
+          const d = new Date(raw);
+          if (!isNaN(d.getTime())) return d;
+        }
+        if (doc._id && typeof doc._id.getTimestamp === 'function') {
+          try { return doc._id.getTimestamp(); } catch (e) {}
+        }
+        return null;
+      };
+
+      // Retrieve all email campaigns across history for this user or workspace
+      let allEmailCampaigns = [];
+      try {
+        if (userId) {
+          allEmailCampaigns = await Campaign.find({ userId }).lean().catch(() => []);
+        }
+        if (allEmailCampaigns.length === 0) {
+          allEmailCampaigns = await Campaign.find({}).lean().catch(() => []);
+        }
+      } catch (e) {}
+
+      // Retrieve all WhatsApp campaigns across history
+      let allWaCampaigns = [];
+      try {
+        if (userId) {
+          allWaCampaigns = await WhatsAppCampaign.find({ userId }).lean().catch(() => []);
+        }
+        if (allWaCampaigns.length === 0) {
+          allWaCampaigns = await WhatsAppCampaign.find({}).lean().catch(() => []);
+        }
+      } catch (e) {}
+
+      // Retrieve all 1-on-1 outbound WhatsApp chat messages
+      let allWaMessages = [];
+      try {
+        if (userId) {
+          allWaMessages = await WhatsAppMessage.find({ userId, direction: 'outbound' }).lean().catch(() => []);
+        }
+        if (allWaMessages.length === 0) {
+          allWaMessages = await WhatsAppMessage.find({ direction: 'outbound' }).lean().catch(() => []);
+        }
+      } catch (e) {}
 
       // ----------------------------------------------------
       // 1. BREVO EMAIL USAGE & PLAN
@@ -81,24 +130,11 @@ class BillingController {
           }
 
           // Aggregate email campaign volume for current month
-          const startOfMonth = new Date();
-          startOfMonth.setDate(1);
-          startOfMonth.setHours(0, 0, 0, 0);
-
-          let emailCampaigns = [];
-          if (userId) {
-            emailCampaigns = await Campaign.find({
-              userId,
-              createdAt: { $gte: startOfMonth }
-            }).lean().catch(() => []);
-          }
-          if (emailCampaigns.length === 0) {
-            emailCampaigns = await Campaign.find({
-              createdAt: { $gte: startOfMonth }
-            }).lean().catch(() => []);
-          }
-
-          const monthlySent = emailCampaigns.reduce((acc, c) => acc + (c.sentCount || 0), 0);
+          const currentMonthEmails = allEmailCampaigns.filter(c => {
+            const cd = getDocDate(c);
+            return cd && cd >= startOfCurrentMonth && cd < endOfCurrentMonth;
+          });
+          const monthlySent = currentMonthEmails.reduce((acc, c) => acc + (c.sentCount || 0), 0);
           brevoData.monthlyEmailsSent = monthlySent;
 
           // Compute usage & limits
@@ -196,20 +232,17 @@ class BillingController {
             if (t.name) templateCategoryMap[t.name] = cat;
           });
 
-          // Aggregate WhatsApp Campaigns
-          let campaigns = [];
-          if (userId) {
-            campaigns = await WhatsAppCampaign.find({ userId }).lean().catch(() => []);
-          }
-          if (campaigns.length === 0) {
-            campaigns = await WhatsAppCampaign.find({}).lean().catch(() => []);
-          }
+          // Aggregate current month's WhatsApp activity
+          const currentMonthWaCamps = allWaCampaigns.filter(c => {
+            const cd = getDocDate(c);
+            return cd && cd >= startOfCurrentMonth && cd < endOfCurrentMonth;
+          });
 
           let marketingCount = 0;
           let utilityCount = 0;
           let authCount = 0;
 
-          campaigns.forEach(camp => {
+          currentMonthWaCamps.forEach(camp => {
             const sent = camp.sentCount || 0;
             whatsAppData.totalSent += sent;
             whatsAppData.totalDelivered += (camp.deliveredCount || 0);
@@ -226,23 +259,14 @@ class BillingController {
             }
           });
 
-          // Aggregate 1-on-1 Outbound Chat Messages (Service conversations)
-          let serviceMessagesCount = 0;
-          if (userId) {
-            serviceMessagesCount = await WhatsAppMessage.countDocuments({
-              userId,
-              direction: 'outbound'
-            }).catch(() => 0);
-          }
-          if (serviceMessagesCount === 0) {
-            serviceMessagesCount = await WhatsAppMessage.countDocuments({
-              direction: 'outbound'
-            }).catch(() => 0);
-          }
-
+          const currentMonthWaMsgs = allWaMessages.filter(m => {
+            const cd = getDocDate(m);
+            return cd && cd >= startOfCurrentMonth && cd < endOfCurrentMonth;
+          });
+          const serviceMessagesCount = currentMonthWaMsgs.length;
           whatsAppData.totalSent += serviceMessagesCount;
 
-          // Calculate estimated Meta rate charges
+          // Calculate estimated Meta rate charges for current month
           const marketingCost = +(marketingCount * 0.80).toFixed(2);
           const utilityCost = +(utilityCount * 0.12).toFixed(2);
           const authCost = +(authCount * 0.12).toFixed(2);
@@ -267,23 +291,72 @@ class BillingController {
       const totalEstimatedSpendUSD = +(brevoData.estimatedCostUSD + whatsAppData.estimatedChargesUSD).toFixed(2);
       const totalEstimatedSpendINR = +(brevoData.estimatedCostINR + whatsAppData.estimatedChargesINR).toFixed(2);
 
-      const now = new Date();
       const currentMonthName = now.toLocaleString('default', { month: 'short' });
       const currentYear = now.getFullYear();
 
-      // Generate all months data (Past 12 months rolling history)
+      // Generate all 12 rolling months derived 100% from actual database campaigns and messages
       const invoiceHistory = [];
-      const monthMultipliers = [1.0, 0.88, 0.76, 0.92, 0.65, 0.80, 0.70, 0.60, 0.75, 0.50, 0.55, 0.45];
+      const safeEmailList = allEmailCampaigns;
+      const safeWaCampList = allWaCampaigns;
+      const safeWaMsgList = allWaMessages;
 
       for (let i = 0; i < 12; i++) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
         const mName = d.toLocaleString('default', { month: 'short' });
+        const fullMonth = d.toLocaleString('default', { month: 'long' });
         const yNum = d.getFullYear();
         const mNum = String(d.getMonth() + 1).padStart(2, '0');
-        const mult = monthMultipliers[i] || 0.6;
+        const monthKey = `${yNum}-${mNum}`;
 
-        const baseINR = i === 0 ? totalEstimatedSpendINR : Math.max(950, Math.round((totalEstimatedSpendINR || 1420) * mult));
-        const baseUSD = i === 0 ? totalEstimatedSpendUSD : +(baseINR / 83.5).toFixed(2);
+        const monthStart = new Date(yNum, d.getMonth(), 1, 0, 0, 0, 0);
+        const monthEnd = new Date(yNum, d.getMonth() + 1, 1, 0, 0, 0, 0);
+
+        // Real email campaigns sent in this specific calendar month
+        const monthEmails = safeEmailList.filter(c => {
+          const cd = getDocDate(c);
+          return cd && cd >= monthStart && cd < monthEnd;
+        });
+        const monthEmailSent = monthEmails.reduce((acc, c) => acc + (c.sentCount || 0), 0);
+
+        // Real WhatsApp campaigns sent in this specific calendar month
+        const monthWaCamps = safeWaCampList.filter(c => {
+          const cd = getDocDate(c);
+          return cd && cd >= monthStart && cd < monthEnd;
+        });
+
+        let monthMarketingCount = 0;
+        let monthUtilityCount = 0;
+        let monthAuthCount = 0;
+
+        monthWaCamps.forEach(camp => {
+          const sent = camp.sentCount || 0;
+          monthMarketingCount += sent;
+        });
+
+        // Real 1-on-1 outbound WhatsApp chat messages in this specific calendar month
+        const monthWaMsgs = safeWaMsgList.filter(m => {
+          const cd = getDocDate(m);
+          return cd && cd >= monthStart && cd < monthEnd;
+        });
+        const monthServiceCount = monthWaMsgs.length;
+
+        const totalWaSent = monthMarketingCount + monthUtilityCount + monthAuthCount + monthServiceCount;
+
+        // Compute actual Meta WhatsApp provider cost
+        const waCostINR = +(
+          monthMarketingCount * 0.80 +
+          monthUtilityCount * 0.12 +
+          monthAuthCount * 0.12 +
+          monthServiceCount * 0.30
+        ).toFixed(2);
+
+        // Compute actual Brevo email cost (subscription fee if active, or per-credit fee)
+        const emailCostINR = (brevoData.planType === 'subscription')
+          ? (monthEmailSent > 0 || i === 0 ? 2087.50 : 0.00)
+          : +(monthEmailSent * 0.09).toFixed(2);
+
+        const baseINR = +(waCostINR + emailCostINR).toFixed(2);
+        const baseUSD = +(baseINR / 83.5).toFixed(2);
         const forexINR = +(baseINR * 0.055).toFixed(2);
         const forexUSD = +(baseUSD * 0.055).toFixed(2);
         const serviceChargeINR = +(baseINR * 0.30).toFixed(2);
@@ -291,15 +364,13 @@ class BillingController {
         const totalBilledINR = +(baseINR + forexINR + serviceChargeINR).toFixed(2);
         const totalBilledUSD = +(baseUSD + forexUSD + serviceChargeUSD).toFixed(2);
 
-        const waVol = i === 0 ? whatsAppData.totalSent : Math.max(450, Math.round((whatsAppData.totalSent || 1240) * mult));
-        const emailVol = i === 0 ? brevoData.monthlyEmailsSent : Math.max(1200, Math.round((brevoData.monthlyEmailsSent || 4580) * mult));
-
         invoiceHistory.push({
           id: `INV-${yNum}-${mNum}`,
           date: `${mName} 01, ${yNum}`,
           monthName: mName,
+          fullMonthName: fullMonth,
           year: yNum,
-          monthKey: `${yNum}-${mNum}`,
+          monthKey: monthKey,
           channel: "Combined (WhatsApp + Brevo)",
           baseCostINR: baseINR,
           baseCostUSD: baseUSD,
@@ -311,9 +382,9 @@ class BillingController {
           totalBilledUSD: totalBilledUSD,
           amountUSD: `$${totalBilledUSD.toFixed(2)}`,
           amountINR: `₹${totalBilledINR.toLocaleString()}`,
-          status: i === 0 ? "Current Cycle" : "Paid",
-          whatsappVolume: waVol,
-          brevoVolume: emailVol
+          status: i === 0 ? "Current Cycle" : (totalBilledINR > 0 ? "Paid" : "Settled"),
+          whatsappVolume: totalWaSent,
+          brevoVolume: monthEmailSent
         });
       }
 
