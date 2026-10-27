@@ -307,6 +307,8 @@ class BillingController {
           forexChargeUSD: forexUSD,
           serviceChargeINR: serviceChargeINR,
           serviceChargeUSD: serviceChargeUSD,
+          totalBilledINR: totalBilledINR,
+          totalBilledUSD: totalBilledUSD,
           amountUSD: `$${totalBilledUSD.toFixed(2)}`,
           amountINR: `₹${totalBilledINR.toLocaleString()}`,
           status: i === 0 ? "Current Cycle" : "Paid",
