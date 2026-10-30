@@ -108,6 +108,8 @@ const aiRoutes = require('./routes/aiRoutes');
 const canvaRoutes = require('./routes/canvaRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const billingRoutes = require('./routes/billingRoutes');
+const firebaseRoutes = require('./routes/firebaseRoutes');
+const instagramRoutes = require('./routes/instagramRoutes');
 
 // Routes - CORRECTED
 app.use('/api/auth', authRoutes);     // This gives: /api/auth/login, /api/auth/register
@@ -127,6 +129,8 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/canva', canvaRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/billing', billingRoutes);
+app.use('/api/firebase', firebaseRoutes);
+app.use('/api/instagram', instagramRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

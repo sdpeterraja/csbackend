@@ -22,10 +22,10 @@ const payload = {
             "messages": [
               {
                 "from": "14155552671",
-                "id": "wamid.HBgLMTQxNTU1NTI2NzEVAgASGBQzQTU0OEQzMEUyOEUyMjc1NEEAA",
+                "id": "wamid.HBgLMTQxNTU1NTI2NzEVAgASGBQzQTU0OEQzMEUyOEUyMjc1NEEBB",
                 "timestamp": "1694217180",
                 "text": {
-                  "body": "Hi, I just placed an order and I have a question!"
+                  "body": "Testing inbox update!"
                 },
                 "type": "text"
               }
