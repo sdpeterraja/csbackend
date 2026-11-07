@@ -37,6 +37,7 @@ router.post('/webhook/simulate', whatsappController.simulateStatus);
 router.get('/inbox/conversations', whatsappController.getConversations);
 router.get('/inbox/:phone', whatsappController.getConversationHistory);
 router.post('/inbox/:phone/reply', whatsappController.sendDirectReply);
+router.post('/inbox/:phone/template', whatsappController.sendTemplateReply);
 router.put('/inbox/:phone/crm', whatsappController.updateContactCrm);
 
 module.exports = router;

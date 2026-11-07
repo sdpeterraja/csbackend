@@ -351,10 +351,10 @@ async function sendRealWhatsAppMessage(config, recipient, template) {
   const variablesObj = variablesMap instanceof Map ? Object.fromEntries(variablesMap) : variablesMap;
 
   for (let i = 1; i <= paramCount; i++) {
-    const valObj = variablesObj[`{{${i}}}`] || "";
+    const valObj = variablesObj[`{{${i}}}`] ?? variablesObj[`${i}`] ?? variablesObj[i] ?? "";
     parameters.push({
       type: "text",
-      text: valObj
+      text: String(valObj)
     });
   }
 
@@ -1373,6 +1373,72 @@ console.log(logs)
       res.json({ success: true, message: newMsg });
     } catch (error) {
       console.error("Error sending direct reply:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  },
+
+  async sendTemplateReply(req, res) {
+    try {
+      const userId = req.user.userId;
+      const phone = req.params.phone;
+      const { templateId, templateName, variables } = req.body;
+
+      if (!templateId && !templateName) {
+        return res.status(400).json({ success: false, error: "templateId or templateName is required" });
+      }
+
+      const config = await WhatsAppConfig.findOne({ userId });
+      if (!config || !config.accessToken || !config.phoneId) {
+        return res.status(400).json({ success: false, error: "WhatsApp credentials not configured" });
+      }
+
+      let query = { userId };
+      if (templateId) {
+        if (mongoose.isValidObjectId(templateId)) {
+          query.$or = [{ id: templateId }, { _id: templateId }];
+        } else {
+          query.id = templateId;
+        }
+      } else if (templateName) {
+        query.name = templateName;
+      }
+
+      const template = await WhatsAppTemplate.findOne(query);
+      if (!template) {
+        return res.status(404).json({ success: false, error: "Template not found" });
+      }
+
+      // Send using Meta Cloud API proxy
+      const resData = await sendRealWhatsAppMessage(config, { phone, variables: variables || {} }, template);
+
+      const msgId = resData.messages?.[0]?.id || `tpl_${Date.now()}`;
+
+      // Substitute variables into body text for the local inbox message display
+      let renderedText = template.bodyText || "";
+      if (variables && typeof variables === 'object') {
+        Object.keys(variables).forEach((k) => {
+          const pattern = k.startsWith('{{') ? k : `{{${k}}}`;
+          renderedText = renderedText.split(pattern).join(String(variables[k]));
+        });
+      }
+
+      const lastMsg = await WhatsAppMessage.findOne({ userId, phone }).sort({ timestamp: -1 });
+      const contactName = lastMsg ? lastMsg.contactName : "Unknown Contact";
+
+      const newMsg = await WhatsAppMessage.create({
+        userId,
+        phone,
+        contactName,
+        direction: 'outbound',
+        content: `[Template: ${template.name}]\n${renderedText}`,
+        messageId: msgId,
+        status: 'sent',
+        timestamp: new Date()
+      });
+
+      res.json({ success: true, message: newMsg, metaResponse: resData });
+    } catch (error) {
+      console.error("Error sending template reply:", error);
       res.status(500).json({ success: false, error: error.message });
     }
   }
